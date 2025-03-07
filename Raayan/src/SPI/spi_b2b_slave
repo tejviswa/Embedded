@@ -1,0 +1,135 @@
+/*
+	Program      : 
+	File Name    :
+	Author       : D V SIVABABA
+	Date         : 26-NOV-2024
+	
+ 	Board        : RaayanMini
+	Controller   : STM32F401RBT6
+	Version      : 4.0
+	
+	Pins Used    : PORT C 2    convert as MISO
+								 PORT C 3    convert as MOSI
+								 PORT C 4    convert as SS
+								 PORT B 10   convert as SCK
+*/
+
+#include "main.h"
+//char ch='A';
+char temp;
+int flag1,flag2;
+
+
+
+
+void SPI2_Slave_Bus_Init(void)
+{
+	RCC_APB1ENR |=(0x01<<14);        //Enable the clock for SPI2
+	GPIOC_AFRL |= 0x00000500;     //convert as SPI2 MISO
+	GPIOC_AFRL |= 0x00005000;     //convert as SPI2 MOSI
+	GPIOB_AFRH |= 0x00000500;     //convert as SPI2 SCK
+	
+	SPI2_CR1   |= 0x00000000;     //set baud rate by clearing 3,4,5 bit fields
+
+	SPI2_CR1   &= ~(0x01<<11);    //set the data frame format by clearing the 11 bit field
+	SPI2_CR1   &= ~(0x01<<0);     //CPHA = 0
+	SPI2_CR1   &= ~(0x01<<1);     //CPOL = 0
+	//SPI2_CR1   |=   0x01<<2;      //set as MASTER
+
+	SPI2_CR1   |=   0x01<<9;      //set as software slave mode
+	SPI2_CR1   &=   ~(0x01<<8);   //clear the Internal slave select (SSI)
+	//SPI2_CR2   |=   0x01<<4;      //SPI TI mode  
+	SPI2_CR1   &=   ~(0x01<<2);      
+	SPI2_CR2   |=   0x01<<6;      //enable interupt pin for receiver
+	SPI2_CR1   |=   0x01<<6;      //SPI2 enable
+}
+
+int main()
+{
+	//Phase 1:Device initialization
+	PORT_init(B);             //PORTB clock enable
+	PORT_init(C);             //PORTC clock enable
+	SYSTICK_init();
+	RCC_APB2ENR |=(0x01<<14);            //SYSCFG clock enable
+	//Phase 2:Device Configuration
+	MODER_config(2,10,2);        //Alternate mode for MISO
+	MODER_config(2,10,3);        //Alternate mode for MOSI
+	MODER_config(2,01,4);        //Output mode for SS or CS
+	MODER_config(1,10,10);       //ALternate mode for SCK
+	PUPDR_config(2,01,8);				//Pullup for switch UP
+	PUPDR_config(2,01,9);				//Pullup for switch DN
+	//GPIOC_OSPEEDR |= 0x01<<5;         //pin 2 set as high speed
+	//GPIOC_OSPEEDR |= 0x01<<7;         //pin 3 set as high speed
+	MODER_config(1,01,13);       //RED LED
+	MODER_config(1,01,14);       //GREEN LED
+	
+	SYSCFG_EXTICR3 |= 0x01<<1;        //set PORT C as external interrupt
+	SYSCFG_EXTICR3 |= 0x01<<5;        //set PORT C as external interrupt
+	
+	EXTI_FTSR |=(0x01<<8);              //Falling edge trigger for SW_UP
+	EXTI_FTSR |=(0x01<<9);              //Falling edge trigger for SW_DN
+	
+	EXTI_IMR|=(0x01<<8);                //Masakable for SW_UP
+	EXTI_IMR|=(0x01<<9);               //Masakable for SW_DN
+	
+	SPI2_Slave_Bus_Init();
+	
+	
+	NVIC_ISER0 |= 0x01<<23;           //NVIC interrupt for SW_UP & SW_DN 
+	NVIC_ISER1 |= 0x01<<4;            //NVIC interrupt for SPI2
+	
+	GPIOB_ODR |= (0x01<<13);         //Turn OFF the RED LED
+	GPIOB_ODR |= (0x01<<14);         //Turn OFF the GREEN LED
+	
+	while(1)
+	{
+		if(flag1 == 1)
+		{
+			SPI2_outchar('R');
+			KM_delayms_IT2(1000);
+		//	SPI2_DR =(0x00);
+			flag1=0;
+		}
+		else if(flag2 == 1)
+		{
+			SPI2_outchar('G');
+			//KM_delayms_IT2(200);
+			KM_delayms_IT2(1000);
+			//SPI2_DR =(0x00);
+			
+			flag2=0;
+		}
+	}
+}
+
+//Interrupt handler for SWITCH_UP & SWITCH_DOWN
+void EXTI9_5_IRQHandler(void)
+{
+	if(EXTI_PR & 0x01<<8)                //checking the SWITCH_UP    
+	{
+		//SPI2_CR1 |= 0x01<<2;               //set as master
+		//SPI2_DR = 'R';                     //send R character to the data register
+		flag1=1;
+		EXTI_PR |= 0x01<<8;
+		//SPI2_CR1 |= ~(0x01<<2);            //set as slave
+	}
+	else if(EXTI_PR & 0x01<<9)           //checking the SWITCH_DOWN
+	{
+		//SPI2_CR1 |= 0x01<<2;             //set as master
+		//SPI2_DR = 'G';                   //send G chracter to the data register
+		flag2 = 1;
+		EXTI_PR |= 0x01<<9;
+		//SPI2_CR1 |= ~(0x01<<2);          //set as slave
+	}
+}
+
+void SPI2_IRQHandler(void)
+{
+	
+	if(SPI2_SR & 0x01<<0)
+		temp = SPI2_DR & 0xFF;
+	if(temp =='R')
+		GPIOB_ODR |= 0x01<<13;
+	else if(temp == 'G')
+		GPIOB_ODR &= ~(0x01<<13);
+}
